@@ -1,0 +1,97 @@
+name: Test, Build & Deploy to Azure Container Instances
+
+on:
+  push:
+    branches: [ main ]
+
+# ====== ENV YANG TIDAK RAHASIA (BOLEH DI SINI) ======
+env:
+  # ACR_PASSWORD = ...  # rahasia, disimpan di GitHub Secrets
+  # AZURE_CREDENTIALS = ...  # rahasia, disimpan di GitHub Secrets
+
+  
+  ACR_LOGIN_SERVER: bnccrregistry.azurecr.io
+  ACR_USERNAME: bnccrregistry
+  IMAGE_NAME: techdive-webpage
+  RESOURCE_GROUP: bncc-techdive-2025
+  ACI_NAME: techdive-webpage-aci
+  DNS_LABEL: bncc-techdive-2025
+  LOCATION: "southeastasia"
+
+jobs:
+  # ========== 1) TEST ==========
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run static frontend checks
+        run: |
+          test -f index.html
+          test -f styles.css
+
+  # ========== 2) BUILD & PUSH IMAGE ==========
+  build:
+    needs: test    # hanya jalan kalau job "test" sukses
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure Container Registry
+        run: |
+          docker login ${{ env.ACR_LOGIN_SERVER }} \
+          -u ${{ env.ACR_USERNAME }} \
+          -p ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build & Push Docker image
+        run: |
+          IMAGE_TAG=${{ github.sha }}
+
+          echo "Building image: $ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG"
+
+          docker build -t $ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG .
+
+          echo "Pushing image to ACR..."
+          docker push $ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG
+
+  # ========== 3) DEPLOY KE ACI ==========
+  deploy:
+    needs: build   # hanya jalan kalau "build" sukses
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure Container Instances
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            set -e
+
+            echo "Deleting container group if it already exists (ignore error if not found)..."
+            az container delete \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --name ${{ env.ACI_NAME }} \
+              --yes || true
+
+            echo "Deploying new container to ACI..."
+            az container create \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --name ${{ env.ACI_NAME }} \
+              --image ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+              --registry-login-server ${{ env.ACR_LOGIN_SERVER }} \
+              --registry-username ${{ env.ACR_USERNAME }} \
+              --registry-password ${{ secrets.ACR_PASSWORD }} \
+              --dns-name-label ${{ env.DNS_LABEL }} \
+              --location ${{ env.LOCATION }} \
+              --ports 80 \
+              --restart-policy Always
+
+            echo "Selesai. Coba akses: http://${{ env.DNS_LABEL }}.${{ env.LOCATION }}.azurecontainer.io"
