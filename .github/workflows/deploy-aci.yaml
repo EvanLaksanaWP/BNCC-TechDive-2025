@@ -74,7 +74,7 @@ jobs:
         with:
           inlineScript: |
             set -e
-
+            
             echo "Deleting container group if it already exists (ignore error if not found)..."
             az container delete \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -92,6 +92,7 @@ jobs:
               --dns-name-label ${{ env.DNS_LABEL }} \
               --location ${{ env.LOCATION }} \
               --ports 80 \
+              --os-type Linux \
               --restart-policy Always
 
             echo "Selesai. Coba akses: http://${{ env.DNS_LABEL }}.${{ env.LOCATION }}.azurecontainer.io"
